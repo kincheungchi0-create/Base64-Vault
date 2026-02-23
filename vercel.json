@@ -1,0 +1,12 @@
+{
+    "version": 2,
+    "name": "base64-vault",
+    "cleanUrls": true,
+    "public": true,
+    "rewrites": [
+        {
+            "source": "/(.*)",
+            "destination": "/webapp/$1"
+        }
+    ]
+}
