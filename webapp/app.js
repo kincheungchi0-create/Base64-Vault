@@ -34,13 +34,33 @@ const FILE_SIGNATURES = {
 
 function detectFileType(base64Content) {
     const clean = cleanBase64(base64Content);
-    for (const [sig, info] of Object.entries(FILE_SIGNATURES)) {
-        if (clean.startsWith(sig)) return info;
+    if (!clean) return { type: 'unknown', icon: '📎', label: 'Unknown' };
+
+    // ZIP-based formats (ZIP, DOCX, XLSX, PPTX)
+    // PK\x03\x04, PK\x05\x06, PK\x07\x08 all start with 'UEs' in Base64
+    if (clean.startsWith('UEs')) {
+        // We look for internal folder names which are characteristic of Office files.
+        // These can appear at different alignments, so we check the most common variants.
+
+        // Word: check for 'word/' folder
+        if (clean.includes('d29yZC') || clean.includes('dvcmQv') || clean.includes('3b3JkLw')) {
+            return { type: 'docx', icon: '📝', label: 'Word' };
+        }
+        // Excel: check for 'xl/' folder
+        if (clean.includes('eGwv') || clean.includes('eGwv') || clean.includes('hsLw')) {
+            return { type: 'xlsx', icon: '📊', label: 'Excel' };
+        }
+        // PowerPoint: check for 'ppt/' folder
+        if (clean.includes('cHB0Lw') || clean.includes('cHB0Lw') || clean.includes('cHB0Lw')) {
+            return { type: 'pptx', icon: '📽️', label: 'PowerPoint' };
+        }
+
+        return { type: 'zip', icon: '📦', label: 'ZIP Archive' };
     }
 
-    // Check for DOCX/XLSX/PPTX by looking for PK signature
-    if (clean.startsWith('UEs')) {
-        return { type: 'docx', icon: '📝', label: 'Office Doc' };
+    // Other formats
+    for (const [sig, info] of Object.entries(FILE_SIGNATURES)) {
+        if (clean.startsWith(sig)) return info;
     }
 
     return { type: 'unknown', icon: '📎', label: 'Unknown' };
@@ -55,6 +75,7 @@ function getFileExtension(filename, detectedType) {
 // ---- Clean Base64 ----
 function cleanBase64(content) {
     return content
+        .replace(/^data:[^;]+;base64,/, '') // Remove Data URI prefix
         .replace(/-----BEGIN[^-]*-----/g, '')
         .replace(/-----END[^-]*-----/g, '')
         .replace(/[\s\r\n]/g, '')
@@ -64,6 +85,8 @@ function cleanBase64(content) {
 // ---- UI Updates ----
 const base64Input = document.getElementById('base64Input');
 const filenameInput = document.getElementById('filenameInput');
+const extSelectorGroup = document.getElementById('extSelectorGroup');
+const extSelect = document.getElementById('extSelect');
 const charCount = document.getElementById('charCount');
 const sizeEstimate = document.getElementById('sizeEstimate');
 const fileTypeBadge = document.getElementById('fileTypeBadge');
@@ -88,10 +111,10 @@ base64Input.addEventListener('input', () => {
 
     if (len > 10) {
         const detected = detectFileType(content);
-        fileTypeBadge.style.display = 'inline-block';
-        fileTypeText.textContent = `Extension: .${detected.type}`;
-    } else {
-        fileTypeBadge.style.display = 'none';
+        // Automatically sync the dropdown to what we detected
+        if (detected.type !== 'unknown') {
+            extSelect.value = detected.type;
+        }
     }
 });
 
@@ -100,7 +123,6 @@ function clearInput() {
     filenameInput.value = '';
     charCount.textContent = '0 characters';
     sizeEstimate.textContent = '~0 KB';
-    fileTypeBadge.style.display = 'none';
 }
 
 // ---- Toast ----
@@ -129,15 +151,17 @@ async function submitBase64() {
 
     const detected = detectFileType(content);
 
+    // Always use the value from the dropdown (which was auto-set but the user can change)
+    const finalExt = extSelect.value;
+
     // Auto-generate name if user left it blank
     if (!userFilename) {
         userFilename = `file_${Math.floor(Date.now() / 1000)}`;
     }
 
-    // Combine user-provided name with auto-detected extension
-    // Remove extension if user accidentally added one to keep it clean
+    // Combine user-provided name with extension
     const baseName = userFilename.replace(/\.[^/.]+$/, "");
-    const filename = `${baseName}.${detected.type}`;
+    const filename = `${baseName}.${finalExt}`;
 
     const cleanContent = cleanBase64(content);
 
@@ -152,7 +176,7 @@ async function submitBase64() {
             body: JSON.stringify({
                 filename: filename,
                 content: cleanContent,
-                file_type: detected.type,
+                file_type: finalExt,
                 processed: false
             })
         });

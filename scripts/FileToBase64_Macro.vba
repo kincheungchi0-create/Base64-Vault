@@ -1,8 +1,3 @@
-Attribute VB_Name = "Module_Base64Converter"
-' ==========================================================
-' Base64 Vault - VBA Extension
-' 功能：將同資料夾下的所有檔案轉換為 Base64 並儲存為 .txt
-' ==========================================================
 
 Sub BatchConvertFilesToBase64()
     Dim fso As Object

@@ -53,47 +53,56 @@
             <div class="card glass-card">
                 <div class="card-header">
                     <h2>📋 Paste Base64 Content</h2>
-                    <div class="file-type-badge" id="fileTypeBadge" style="display:none;">
-                        <span id="fileTypeText">Unknown</span>
+                    <div class="input-row" style="gap: 12px; margin-bottom: 16px;">
+                        <div class="input-group" style="flex: 1;">
+                            <label for="filenameInput">Filename</label>
+                            <input type="text" id="filenameInput" placeholder="Name (e.g. report)" spellcheck="false" />
+                        </div>
+                        <div class="input-group" style="width: 140px; flex-shrink: 0;">
+                            <label for="extSelect">Format</label>
+                            <select id="extSelect"
+                                style="background: rgba(255, 255, 255, 0.05); color: white; border: 1px solid rgba(255, 255, 255, 0.1); padding: 10px; border-radius: 8px; font-size: 14px; width: 100%; cursor: pointer;">
+                                <option value="pdf">.pdf</option>
+                                <option value="docx">.docx</option>
+                                <option value="xlsx">.xlsx</option>
+                                <option value="pptx">.pptx</option>
+                                <option value="zip">.zip</option>
+                                <option value="png">.png</option>
+                                <option value="jpg">.jpg</option>
+                                <option value="txt">.txt</option>
+                                <option value="bin">.bin</option>
+                            </select>
+                        </div>
+                    </div>
+
+
+                    <div class="textarea-wrapper">
+                        <textarea id="base64Input"
+                            placeholder="Paste your Base64 content here...&#10;&#10;Supports: PDF, DOCX, PNG, JPG, ZIP, and more.&#10;File type will be auto-detected from the content."
+                            spellcheck="false"></textarea>
+                        <div class="textarea-info">
+                            <span id="charCount">0 characters</span>
+                            <span id="sizeEstimate">~0 KB</span>
+                        </div>
+                    </div>
+
+                    <div class="actions">
+                        <button class="btn btn-secondary" id="clearBtn" onclick="clearInput()">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                                <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" />
+                            </svg>
+                            Clear
+                        </button>
+                        <button class="btn btn-primary" id="submitBtn" onclick="submitBase64()">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                                <path d="M2 8h12M10 4l4 4-4 4" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                            Store to Cloud
+                        </button>
                     </div>
                 </div>
-
-                <div class="input-row">
-                    <div class="input-group">
-                        <label for="filenameInput">Custom Name (No extension needed)</label>
-                        <input type="text" id="filenameInput" placeholder="e.g. my_report, holiday_photo"
-                            spellcheck="false" />
-                    </div>
-                </div>
-
-
-                <div class="textarea-wrapper">
-                    <textarea id="base64Input"
-                        placeholder="Paste your Base64 content here...&#10;&#10;Supports: PDF, DOCX, PNG, JPG, ZIP, and more.&#10;File type will be auto-detected from the content."
-                        spellcheck="false"></textarea>
-                    <div class="textarea-info">
-                        <span id="charCount">0 characters</span>
-                        <span id="sizeEstimate">~0 KB</span>
-                    </div>
-                </div>
-
-                <div class="actions">
-                    <button class="btn btn-secondary" id="clearBtn" onclick="clearInput()">
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                            <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2"
-                                stroke-linecap="round" />
-                        </svg>
-                        Clear
-                    </button>
-                    <button class="btn btn-primary" id="submitBtn" onclick="submitBase64()">
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                            <path d="M2 8h12M10 4l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                stroke-linejoin="round" />
-                        </svg>
-                        Store to Cloud
-                    </button>
-                </div>
-            </div>
         </section>
 
         <!-- Recent Entries -->
