@@ -76,13 +76,22 @@
                     </div>
 
 
+                    <div class="large-content-banner" id="largeBanner" style="display: none;">
+                        <span class="banner-icon">⚡</span>
+                        <span class="banner-text"></span>
+                        <button type="button" class="btn-clear-banner" onclick="clearInput()">✕</button>
+                    </div>
+
                     <div class="textarea-wrapper">
                         <textarea id="base64Input"
-                            placeholder="Paste your Base64 content here...&#10;&#10;Supports: PDF, DOCX, PNG, JPG, ZIP, and more.&#10;File type will be auto-detected from the content."
+                            placeholder="Paste your Base64 content here...&#10;&#10;Supports: PDF, DOCX, PNG, JPG, ZIP, and more.&#10;File type will be auto-detected from the content.&#10;&#10;Large content (>2 MB) will be handled automatically."
                             spellcheck="false"></textarea>
                         <div class="textarea-info">
                             <span id="charCount">0 characters</span>
                             <span id="sizeEstimate">~0 KB</span>
+                        </div>
+                        <div class="progress-bar" id="progressBar" style="display: none;">
+                            <div class="progress-fill" id="progressFill"></div>
                         </div>
                     </div>
 

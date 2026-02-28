@@ -621,6 +621,61 @@ textarea::placeholder {
   display: inline-block;
 }
 
+/* Large Content Banner */
+.large-content-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+  font-size: 0.8rem;
+  color: var(--accent-primary);
+}
+
+.banner-icon { font-size: 1rem; }
+.banner-text { flex: 1; }
+
+.btn-clear-banner {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.btn-clear-banner:hover {
+  color: var(--text-primary);
+}
+
+/* Large Mode Textarea */
+textarea.large-mode {
+  color: var(--text-muted);
+  font-style: italic;
+  min-height: 120px;
+}
+
+/* Progress Bar */
+.progress-bar {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 2px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--accent-gradient);
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
 /* Responsive */
 @media (max-width: 640px) {
   .container { padding: 16px 12px 40px; }

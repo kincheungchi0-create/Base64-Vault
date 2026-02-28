@@ -5,6 +5,9 @@
 const SUPABASE_URL = 'https://fkzsmtlryhvccivhdapu.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrenNtdGxyeWh2Y2NpdmhkYXB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY4MzM5MzAsImV4cCI6MjA4MjQwOTkzMH0.0_liolRCK4YVuBGxtaYZXiB59Rx-bZCTsea2T_Mp5lM';
 const MAX_ENTRIES = 10;
+const LARGE_PASTE_THRESHOLD = 2 * 1024 * 1024; // 2MB — intercept paste above this
+const CHUNK_SIZE = 2 * 1024 * 1024;             // 2MB per Supabase POST
+const PARALLEL_UPLOADS = 3;
 
 const API_HEADERS = {
     'apikey': SUPABASE_ANON_KEY,
@@ -12,6 +15,10 @@ const API_HEADERS = {
     'Content-Type': 'application/json',
     'Prefer': 'return=representation'
 };
+
+// ---- State ----
+let storedContent = null;
+let contentMode = 'textarea'; // 'textarea' | 'memory'
 
 // ---- File Type Detection ----
 const FILE_SIGNATURES = {
@@ -33,96 +40,135 @@ const FILE_SIGNATURES = {
 };
 
 function detectFileType(base64Content) {
-    const clean = cleanBase64(base64Content);
+    const sample = typeof base64Content === 'string'
+        ? base64Content.substring(0, 10000) : base64Content;
+    const clean = cleanBase64(sample);
     if (!clean) return { type: 'unknown', icon: '📎', label: 'Unknown' };
 
-    // ZIP-based formats (ZIP, DOCX, XLSX, PPTX)
-    // PK\x03\x04, PK\x05\x06, PK\x07\x08 all start with 'UEs' in Base64
     if (clean.startsWith('UEs')) {
-        // We look for internal folder names which are characteristic of Office files.
-        // These can appear at different alignments, so we check the most common variants.
-
-        // Word: check for 'word/' folder
-        if (clean.includes('d29yZC') || clean.includes('dvcmQv') || clean.includes('3b3JkLw')) {
+        if (clean.includes('d29yZC') || clean.includes('dvcmQv') || clean.includes('3b3JkLw'))
             return { type: 'docx', icon: '📝', label: 'Word' };
-        }
-        // Excel: check for 'xl/' folder
-        if (clean.includes('eGwv') || clean.includes('eGwv') || clean.includes('hsLw')) {
+        if (clean.includes('eGwv') || clean.includes('hsLw'))
             return { type: 'xlsx', icon: '📊', label: 'Excel' };
-        }
-        // PowerPoint: check for 'ppt/' folder
-        if (clean.includes('cHB0Lw') || clean.includes('cHB0Lw') || clean.includes('cHB0Lw')) {
+        if (clean.includes('cHB0Lw'))
             return { type: 'pptx', icon: '📽️', label: 'PowerPoint' };
-        }
-
         return { type: 'zip', icon: '📦', label: 'ZIP Archive' };
     }
 
-    // Other formats
     for (const [sig, info] of Object.entries(FILE_SIGNATURES)) {
         if (clean.startsWith(sig)) return info;
     }
-
     return { type: 'unknown', icon: '📎', label: 'Unknown' };
 }
 
-function getFileExtension(filename, detectedType) {
-    const ext = filename.split('.').pop().toLowerCase();
-    if (ext && ext !== filename.toLowerCase()) return ext;
-    return detectedType || 'bin';
-}
-
-// ---- Clean Base64 ----
 function cleanBase64(content) {
     return content
-        .replace(/^data:[^;]+;base64,/, '') // Remove Data URI prefix
+        .replace(/^data:[^;]+;base64,/, '')
         .replace(/-----BEGIN[^-]*-----/g, '')
         .replace(/-----END[^-]*-----/g, '')
         .replace(/[\s\r\n]/g, '')
         .trim();
 }
 
-// ---- UI Updates ----
+// ---- Utilities ----
+function debounce(fn, ms) {
+    let timer;
+    return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+}
+
+function formatSize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `~${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `~${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `~${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+// ---- UI Elements ----
 const base64Input = document.getElementById('base64Input');
 const filenameInput = document.getElementById('filenameInput');
-const extSelectorGroup = document.getElementById('extSelectorGroup');
 const extSelect = document.getElementById('extSelect');
 const charCount = document.getElementById('charCount');
 const sizeEstimate = document.getElementById('sizeEstimate');
-const fileTypeBadge = document.getElementById('fileTypeBadge');
-const fileTypeText = document.getElementById('fileTypeText');
 const submitBtn = document.getElementById('submitBtn');
 const statusPill = document.getElementById('statusPill');
+const largeBanner = document.getElementById('largeBanner');
+const progressBar = document.getElementById('progressBar');
+const progressFill = document.getElementById('progressFill');
 
-base64Input.addEventListener('input', () => {
-    const content = base64Input.value;
-    const len = content.length;
-    charCount.textContent = `${len.toLocaleString()} characters`;
+// ---- Paste Interception ----
+base64Input.addEventListener('paste', (e) => {
+    const text = (e.clipboardData || window.clipboardData).getData('text');
+    if (text.length > LARGE_PASTE_THRESHOLD) {
+        e.preventDefault();
+        storedContent = text;
+        contentMode = 'memory';
 
-    const cleanLen = cleanBase64(content).length;
-    const bytes = Math.ceil(cleanLen * 3 / 4);
-    if (bytes < 1024) {
-        sizeEstimate.textContent = `~${bytes} B`;
-    } else if (bytes < 1024 * 1024) {
-        sizeEstimate.textContent = `~${(bytes / 1024).toFixed(1)} KB`;
-    } else {
-        sizeEstimate.textContent = `~${(bytes / 1024 / 1024).toFixed(2)} MB`;
-    }
+        const preview = text.substring(0, 300);
+        base64Input.value = preview
+            + '\n\n── Content too large for display ──\n'
+            + 'Full content stored in memory. Click "Store to Cloud" to upload.';
+        base64Input.classList.add('large-mode');
 
-    if (len > 10) {
-        const detected = detectFileType(content);
-        // Automatically sync the dropdown to what we detected
-        if (detected.type !== 'unknown') {
-            extSelect.value = detected.type;
-        }
+        updateContentStats(text);
+        showLargeBanner(text.length);
     }
 });
 
+// ---- Debounced Input Handler ----
+const handleInput = debounce(() => {
+    if (contentMode !== 'textarea') return;
+    const content = base64Input.value;
+    const len = content.length;
+    charCount.textContent = `${len.toLocaleString()} chars`;
+    sizeEstimate.textContent = formatSize(Math.ceil(len * 3 / 4));
+
+    if (len > 10) {
+        const detected = detectFileType(content);
+        if (detected.type !== 'unknown') extSelect.value = detected.type;
+    }
+}, 300);
+
+base64Input.addEventListener('input', handleInput);
+
+// ---- Banner & Progress ----
+function updateContentStats(content) {
+    const len = content.length;
+    charCount.textContent = `${len.toLocaleString()} chars`;
+    sizeEstimate.textContent = formatSize(Math.ceil(len * 3 / 4));
+    if (len > 10) {
+        const detected = detectFileType(content);
+        if (detected.type !== 'unknown') extSelect.value = detected.type;
+    }
+}
+
+function showLargeBanner(size) {
+    largeBanner.style.display = 'flex';
+    const chunks = Math.ceil(size / CHUNK_SIZE);
+    largeBanner.querySelector('.banner-text').textContent =
+        `Large content in memory — ${formatSize(Math.ceil(size * 3 / 4))} — will upload in ${chunks} chunks`;
+}
+
+function showProgress(pct) {
+    progressBar.style.display = 'block';
+    progressFill.style.width = `${pct}%`;
+}
+
+function hideProgress() {
+    progressBar.style.display = 'none';
+    progressFill.style.width = '0%';
+}
+
+// ---- Clear ----
 function clearInput() {
     base64Input.value = '';
+    base64Input.classList.remove('large-mode');
     filenameInput.value = '';
     charCount.textContent = '0 characters';
     sizeEstimate.textContent = '~0 KB';
+    storedContent = null;
+    contentMode = 'textarea';
+    largeBanner.style.display = 'none';
+    hideProgress();
 }
 
 // ---- Toast ----
@@ -134,65 +180,42 @@ function showToast(message, type = 'info', icon = '💡') {
     setTimeout(() => { toast.classList.remove('show'); }, 3500);
 }
 
-// ---- Supabase API ----
+// ---- Status ----
 function setStatus(state, text) {
     statusPill.className = `status-pill ${state}`;
     statusPill.querySelector('.status-text').textContent = text;
 }
 
+// ---- Submit ----
+const SUBMIT_ICON = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8h12M10 4l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
 async function submitBase64() {
-    const content = base64Input.value.trim();
     let userFilename = filenameInput.value.trim();
-
-    if (!content) {
-        showToast('Please paste some Base64 content!', 'error', '⚠️');
-        return;
-    }
-
-    const detected = detectFileType(content);
-
-    // Always use the value from the dropdown (which was auto-set but the user can change)
     const finalExt = extSelect.value;
 
-    // Auto-generate name if user left it blank
-    if (!userFilename) {
-        userFilename = `file_${Math.floor(Date.now() / 1000)}`;
-    }
-
-    // Combine user-provided name with extension
-    const baseName = userFilename.replace(/\.[^/.]+$/, "");
+    if (!userFilename) userFilename = `file_${Math.floor(Date.now() / 1000)}`;
+    const baseName = userFilename.replace(/\.[^/.]+$/, '');
     const filename = `${baseName}.${finalExt}`;
 
-    const cleanContent = cleanBase64(content);
-
     submitBtn.disabled = true;
-    submitBtn.innerHTML = '<span class="spinner"></span> Storing...';
 
     try {
-        // Insert new entry
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/base64_entries`, {
-            method: 'POST',
-            headers: API_HEADERS,
-            body: JSON.stringify({
-                filename: filename,
-                content: cleanContent,
-                file_type: finalExt,
-                processed: false
-            })
-        });
-
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.message || 'Failed to store');
+        if (contentMode === 'memory' && storedContent) {
+            // Large content stored in memory — chunked upload (raw, listener cleans)
+            await uploadChunked(filename, finalExt, storedContent);
+        } else {
+            const content = base64Input.value.trim();
+            if (!content) {
+                showToast('Please paste some Base64 content!', 'error', '⚠️');
+                return;
+            }
+            const cleanContent = cleanBase64(content);
+            await uploadToSupabase(filename, finalExt, cleanContent);
         }
 
-        showToast(`✅ "${filename}" stored successfully!`, 'success', '🎉');
+        showToast(`"${filename}" stored successfully!`, 'success', '🎉');
         clearInput();
-
-        // Cleanup: keep only last MAX_ENTRIES
         await cleanupOldEntries();
-
-        // Refresh list
         await refreshEntries();
 
     } catch (err) {
@@ -200,25 +223,81 @@ async function submitBase64() {
         showToast(`Error: ${err.message}`, 'error', '❌');
     } finally {
         submitBtn.disabled = false;
-        submitBtn.innerHTML = `
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8h12M10 4l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      Store to Cloud
-    `;
+        submitBtn.innerHTML = `${SUBMIT_ICON} Store to Cloud`;
+        hideProgress();
     }
 }
 
+async function uploadChunked(filename, ext, content) {
+    const totalChunks = Math.ceil(content.length / CHUNK_SIZE);
+    const groupId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    let uploaded = 0;
+
+    submitBtn.innerHTML = `<span class="spinner"></span> 0/${totalChunks}`;
+
+    for (let i = 0; i < totalChunks; i += PARALLEL_UPLOADS) {
+        const batch = [];
+        const batchEnd = Math.min(i + PARALLEL_UPLOADS, totalChunks);
+
+        for (let j = i; j < batchEnd; j++) {
+            const chunk = content.slice(j * CHUNK_SIZE, (j + 1) * CHUNK_SIZE);
+            batch.push(
+                fetch(`${SUPABASE_URL}/rest/v1/base64_entries`, {
+                    method: 'POST',
+                    headers: API_HEADERS,
+                    body: JSON.stringify({
+                        filename,
+                        content: chunk,
+                        file_type: `chunk:${groupId}:${j}:${totalChunks}:${ext}`,
+                        processed: false
+                    })
+                }).then(async res => {
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        throw new Error(err.message || `Chunk ${j + 1}/${totalChunks} failed`);
+                    }
+                    uploaded++;
+                    const pct = Math.round(uploaded / totalChunks * 100);
+                    submitBtn.innerHTML = `<span class="spinner"></span> ${uploaded}/${totalChunks}`;
+                    showProgress(pct);
+                })
+            );
+        }
+        await Promise.all(batch);
+    }
+}
+
+async function uploadToSupabase(filename, ext, cleanContent) {
+    submitBtn.innerHTML = '<span class="spinner"></span> Storing...';
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/base64_entries`, {
+        method: 'POST',
+        headers: API_HEADERS,
+        body: JSON.stringify({
+            filename: filename,
+            content: cleanContent,
+            file_type: ext,
+            processed: false
+        })
+    });
+
+    if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || 'Failed to store');
+    }
+}
+
+// ---- Cleanup (skip chunk entries) ----
 async function cleanupOldEntries() {
     try {
-        // Get all entries sorted by created_at desc
         const res = await fetch(
-            `${SUPABASE_URL}/rest/v1/base64_entries?select=id&order=created_at.desc`,
+            `${SUPABASE_URL}/rest/v1/base64_entries?select=id&file_type=not.like.chunk:*&order=created_at.desc`,
             { headers: API_HEADERS }
         );
         const entries = await res.json();
 
         if (entries.length > MAX_ENTRIES) {
             const idsToDelete = entries.slice(MAX_ENTRIES).map(e => e.id);
-            // Delete old entries
             for (const id of idsToDelete) {
                 await fetch(`${SUPABASE_URL}/rest/v1/base64_entries?id=eq.${id}`, {
                     method: 'DELETE',
@@ -231,13 +310,14 @@ async function cleanupOldEntries() {
     }
 }
 
+// ---- Entries list (hide chunk rows) ----
 async function refreshEntries() {
     const entriesList = document.getElementById('entriesList');
     const entryCount = document.getElementById('entryCount');
 
     try {
         const res = await fetch(
-            `${SUPABASE_URL}/rest/v1/base64_entries?select=id,filename,file_type,created_at,processed&order=created_at.desc&limit=${MAX_ENTRIES}`,
+            `${SUPABASE_URL}/rest/v1/base64_entries?select=id,filename,file_type,created_at,processed&file_type=not.like.chunk:*&order=created_at.desc&limit=${MAX_ENTRIES}`,
             { headers: API_HEADERS }
         );
 
@@ -245,47 +325,41 @@ async function refreshEntries() {
 
         const entries = await res.json();
         entryCount.textContent = `(${entries.length}/${MAX_ENTRIES})`;
-
         setStatus('connected', 'Connected');
 
         if (entries.length === 0) {
             entriesList.innerHTML = `
-        <div class="empty-state">
-          <div class="empty-icon">📭</div>
-          <p>No entries yet. Paste some Base64 content above!</p>
-        </div>
-      `;
+                <div class="empty-state">
+                    <div class="empty-icon">📭</div>
+                    <p>No entries yet. Paste some Base64 content above!</p>
+                </div>`;
             return;
         }
 
         entriesList.innerHTML = entries.map((entry, i) => {
-            const detected = FILE_SIGNATURES[Object.keys(FILE_SIGNATURES).find(sig => entry.file_type === FILE_SIGNATURES[sig].type)] || { icon: '📎', label: entry.file_type };
             const icon = getIconForType(entry.file_type);
             const timeAgo = getTimeAgo(entry.created_at);
             const statusClass = entry.processed ? 'processed' : 'pending';
             const statusText = entry.processed ? '✓ Converted' : '⏳ Pending';
 
             return `
-        <div class="entry-card" style="animation-delay: ${i * 0.06}s">
-          <div class="entry-icon">${icon}</div>
-          <div class="entry-info">
-            <div class="entry-filename">${escapeHtml(entry.filename)}</div>
-            <div class="entry-meta">
-              <span class="type-tag">${entry.file_type.toUpperCase()}</span>
-              <span>${timeAgo}</span>
-            </div>
-          </div>
-          <div class="entry-status ${statusClass}">${statusText}</div>
-          <div class="entry-actions">
-            <button class="btn btn-danger" onclick="deleteEntry(${entry.id})">
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            </button>
-          </div>
-        </div>
-      `;
+                <div class="entry-card" style="animation-delay: ${i * 0.06}s">
+                    <div class="entry-icon">${icon}</div>
+                    <div class="entry-info">
+                        <div class="entry-filename">${escapeHtml(entry.filename)}</div>
+                        <div class="entry-meta">
+                            <span class="type-tag">${entry.file_type.toUpperCase()}</span>
+                            <span>${timeAgo}</span>
+                        </div>
+                    </div>
+                    <div class="entry-status ${statusClass}">${statusText}</div>
+                    <div class="entry-actions">
+                        <button class="btn btn-danger" onclick="deleteEntry(${entry.id})">
+                            <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                        </button>
+                    </div>
+                </div>`;
         }).join('');
-
-        setStatus('connected', 'Connected');
 
     } catch (err) {
         console.error('Fetch error:', err);
@@ -299,21 +373,17 @@ function getIconForType(type) {
         pdf: '📄', zip: '📦', docx: '📝', xlsx: '📊', pptx: '📽️',
         png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', bmp: '🖼️', svg: '🎨',
         mp4: '🎬', mp3: '🎵', wav: '🎵',
-        html: '🌐', json: '📋', txt: '📃',
-        unknown: '📎'
+        html: '🌐', json: '📋', txt: '📃', unknown: '📎'
     };
     return icons[type] || '📎';
 }
 
 function getTimeAgo(dateStr) {
-    const now = new Date();
-    const date = new Date(dateStr);
-    const diffMs = now - date;
+    const diffMs = Date.now() - new Date(dateStr).getTime();
     const diffSec = Math.floor(diffMs / 1000);
     const diffMin = Math.floor(diffSec / 60);
     const diffHr = Math.floor(diffMin / 60);
     const diffDay = Math.floor(diffHr / 24);
-
     if (diffSec < 60) return 'just now';
     if (diffMin < 60) return `${diffMin}m ago`;
     if (diffHr < 24) return `${diffHr}h ago`;
@@ -329,8 +399,7 @@ function escapeHtml(str) {
 async function deleteEntry(id) {
     try {
         await fetch(`${SUPABASE_URL}/rest/v1/base64_entries?id=eq.${id}`, {
-            method: 'DELETE',
-            headers: API_HEADERS
+            method: 'DELETE', headers: API_HEADERS
         });
         showToast('Entry deleted', 'info', '🗑️');
         await refreshEntries();
@@ -342,6 +411,5 @@ async function deleteEntry(id) {
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', () => {
     refreshEntries();
-    // Auto-refresh every 10 seconds
     setInterval(refreshEntries, 10000);
 });
