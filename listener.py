@@ -72,13 +72,8 @@ def process_chunk_group(group_id, group_info):
 
     log(f"Assembling: {filename} ({total} chunks)")
 
-    # Claim all chunks
-    for eid in ids:
-        url = f"{SUPABASE_URL}/rest/v1/base64_entries?id=eq.{eid}"
-        requests.patch(url, headers=headers, json={"processed": True})
-
     try:
-        # Fetch chunk content in batches
+        # Fetch chunk content in batches (DON'T mark processed yet)
         all_chunks = []
         for batch_start in range(0, len(ids), CHUNK_FETCH_BATCH):
             batch_ids = ids[batch_start:batch_start + CHUNK_FETCH_BATCH]
@@ -125,7 +120,7 @@ def process_chunk_group(group_id, group_info):
             size_mb = len(file_data) / (1024 * 1024)
             log(f"   Saved: {file_path} ({size_mb:.1f} MB)")
 
-        # Delete chunk rows, insert one metadata record for UI
+        # SUCCESS — now delete chunk rows and insert metadata
         for eid in ids:
             url = f"{SUPABASE_URL}/rest/v1/base64_entries?id=eq.{eid}"
             requests.delete(url, headers=headers)
@@ -144,14 +139,38 @@ def process_chunk_group(group_id, group_info):
 
     except Exception as e:
         log(f"   Assembly error: {e}")
+        # Reset chunks so they can be retried
+        for eid in ids:
+            url = f"{SUPABASE_URL}/rest/v1/base64_entries?id=eq.{eid}"
+            requests.patch(url, headers=headers, json={"processed": False})
 
 
 # ---- Main polling loop ----
+
+def recover_stuck_chunks():
+    """On startup, reset any chunk rows stuck as processed=true (assembly failed previously)."""
+    try:
+        url = (f"{SUPABASE_URL}/rest/v1/base64_entries"
+               f"?file_type=like.chunk:*&processed=eq.true"
+               f"&select=id")
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            entries = resp.json()
+            if entries:
+                log(f"Recovering {len(entries)} stuck chunk(s) from previous run")
+                for e in entries:
+                    patch_url = f"{SUPABASE_URL}/rest/v1/base64_entries?id=eq.{e['id']}"
+                    requests.patch(patch_url, headers=headers, json={"processed": False})
+    except Exception as e:
+        log(f"Recovery check failed: {e}")
+
 
 def start_listener():
     log("Base64 Listener Started")
     log(f"Downloads: {DOWNLOAD_DIR}")
     print("-" * 50)
+
+    recover_stuck_chunks()
 
     while True:
         try:
