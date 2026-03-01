@@ -10,6 +10,9 @@ echo   Webapp:    Deployed on Vercel
 echo   Downloads: %~dp0downloads
 echo.
 echo   Polling Supabase every 3 seconds...
+echo.
+echo   IMPORTANT: Close any other Listener window first.
+echo   Only one listener should run, or chunks will not assemble.
 echo ========================================
 echo.
 

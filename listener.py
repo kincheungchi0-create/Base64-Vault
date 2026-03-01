@@ -54,7 +54,13 @@ def unique_filepath(path):
 def process_entry(entry):
     entry_id = entry['id']
     filename = entry['filename']
-    content = entry['content']
+    content = entry.get('content') or ''
+    ft = entry.get('file_type') or ''
+
+    # Never mark chunks as processed here (only process_chunk_group does that)
+    if ft.startswith('chunk:'):
+        log(f"Skipping chunk entry ID {entry_id} (should not be in regular list)")
+        return
 
     url = f"{SUPABASE_URL}/rest/v1/base64_entries?id=eq.{entry_id}"
     res = requests.patch(url, headers=WRITE_HEADERS, json={"processed": True})
@@ -236,6 +242,7 @@ def cleanup_stale_chunks():
 def start_listener():
     log("Base64 Listener Started")
     log(f"Downloads: {DOWNLOAD_DIR}")
+    log("Run only ONE listener — multiple instances will mark chunks as processed and break assembly.")
     print("-" * 50, flush=True)
 
     recover_stuck_chunks()
@@ -273,28 +280,32 @@ def start_listener():
             chunk_groups = {}
 
             for entry in entries:
-                ft = entry.get('file_type', '')
-                if ft.startswith('chunk:'):
-                    parts = ft.split(':')
-                    if len(parts) >= 5:
-                        gid = parts[1]
-                        total = int(parts[3])
-                        ext = parts[4]
-                        if gid not in chunk_groups:
-                            chunk_groups[gid] = {
-                                'total': total,
-                                'filename': entry['filename'],
-                                'ext': ext,
-                                'ids': []
-                            }
-                        chunk_groups[gid]['ids'].append(entry['id'])
-                else:
+                ft = entry.get('file_type') or ''
+                if not ft.startswith('chunk:'):
+                    # Only process as regular if it's clearly not a chunk
                     regular_ids.append(entry['id'])
+                    continue
+                parts = ft.split(':')
+                if len(parts) >= 5:
+                    gid = parts[1]
+                    total = int(parts[3])
+                    ext = parts[4]
+                    if gid not in chunk_groups:
+                        chunk_groups[gid] = {
+                            'total': total,
+                            'filename': entry['filename'],
+                            'ext': ext,
+                            'ids': []
+                        }
+                    chunk_groups[gid]['ids'].append(entry['id'])
+                else:
+                    # Malformed or unknown chunk format - do NOT add to regular_ids
+                    log(f"  Skipping entry {entry.get('id')} with unknown file_type: {ft[:50]}")
 
             # Process regular entries
             for eid in regular_ids:
                 url = (f"{SUPABASE_URL}/rest/v1/base64_entries"
-                       f"?id=eq.{eid}&select=id,filename,content")
+                       f"?id=eq.{eid}&select=id,filename,content,file_type")
                 res = requests.get(url, headers=READ_HEADERS, timeout=60)
                 if res.status_code == 200:
                     data = res.json()
