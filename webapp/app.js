@@ -6,7 +6,7 @@ const SUPABASE_URL = 'https://fkzsmtlryhvccivhdapu.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrenNtdGxyeWh2Y2NpdmhkYXB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY4MzM5MzAsImV4cCI6MjA4MjQwOTkzMH0.0_liolRCK4YVuBGxtaYZXiB59Rx-bZCTsea2T_Mp5lM';
 const MAX_ENTRIES = 10;
 const LARGE_PASTE_THRESHOLD = 2 * 1024 * 1024; // 2MB — intercept paste above this
-const CHUNK_SIZE = 2 * 1024 * 1024;             // 2MB per Supabase POST
+const CHUNK_SIZE = 5 * 1024 * 1024;             // 5MB per Supabase POST
 const PARALLEL_UPLOADS = 3;
 
 const API_HEADERS = {

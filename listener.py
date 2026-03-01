@@ -12,14 +12,21 @@ SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 
 DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads")
 CHUNK_FETCH_BATCH = 10
+STALE_CHUNK_MINUTES = 30
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-headers = {
+# Separate headers: read-only vs write
+READ_HEADERS = {
+    "apikey": SUPABASE_ANON_KEY,
+    "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+}
+
+WRITE_HEADERS = {
     "apikey": SUPABASE_ANON_KEY,
     "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
     "Content-Type": "application/json",
-    "Prefer": "return=representation"
+    "Prefer": "return=minimal"
 }
 
 _WS_TABLE = str.maketrans('', '', ' \t\n\r\x0b\x0c')
@@ -27,6 +34,19 @@ _WS_TABLE = str.maketrans('', '', ' \t\n\r\x0b\x0c')
 
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def unique_filepath(path):
+    """Return a path that doesn't collide with existing files."""
+    if not os.path.exists(path):
+        return path
+    base, ext = os.path.splitext(path)
+    counter = 1
+    while True:
+        candidate = f"{base}_{counter}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+        counter += 1
 
 
 # ---- Single entry processing ----
@@ -37,7 +57,7 @@ def process_entry(entry):
     content = entry['content']
 
     url = f"{SUPABASE_URL}/rest/v1/base64_entries?id=eq.{entry_id}"
-    res = requests.patch(url, headers=headers, json={"processed": True})
+    res = requests.patch(url, headers=WRITE_HEADERS, json={"processed": True})
     if res.status_code not in [200, 201, 204]:
         return
 
@@ -48,11 +68,7 @@ def process_entry(entry):
             content = content.split(",", 1)[1]
 
         file_data = base64.b64decode(content)
-        file_path = os.path.join(DOWNLOAD_DIR, filename)
-
-        if os.path.exists(file_path):
-            log(f"   File already exists, skipping.")
-            return
+        file_path = unique_filepath(os.path.join(DOWNLOAD_DIR, filename))
 
         with open(file_path, "wb") as f:
             f.write(file_data)
@@ -71,7 +87,12 @@ def process_chunk_group(group_id, group_info):
     ext = group_info['ext']
     ids = group_info['ids']
 
-    log(f"Assembling: {filename} ({total} chunks)")
+    log(f"Assembling: {filename} ({total} chunks, group={group_id})")
+
+    # Claim chunks first so no other process touches them
+    for eid in ids:
+        url = f"{SUPABASE_URL}/rest/v1/base64_entries?id=eq.{eid}"
+        requests.patch(url, headers=WRITE_HEADERS, json={"processed": True})
 
     try:
         all_chunks = []
@@ -81,17 +102,16 @@ def process_chunk_group(group_id, group_info):
             url = (f"{SUPABASE_URL}/rest/v1/base64_entries"
                    f"?id=in.({ids_str})"
                    f"&select=content,file_type")
-            res = requests.get(url, headers=headers, timeout=120)
+            res = requests.get(url, headers=READ_HEADERS, timeout=120)
             if res.status_code != 200:
                 log(f"   Fetch error: {res.status_code}")
-                return
+                raise Exception(f"Fetch failed: {res.status_code}")
             all_chunks.extend(res.json())
             fetched = min(batch_start + CHUNK_FETCH_BATCH, len(ids))
             log(f"   Fetched {fetched}/{total} chunks")
 
         if len(all_chunks) != total:
-            log(f"   Error: got {len(all_chunks)}/{total} chunks")
-            return
+            raise Exception(f"Got {len(all_chunks)}/{total} chunks")
 
         all_chunks.sort(key=lambda c: int(c['file_type'].split(':')[2]))
         combined = ''.join(c['content'] for c in all_chunks)
@@ -106,23 +126,20 @@ def process_chunk_group(group_id, group_info):
         file_data = base64.b64decode(combined)
         del combined
 
-        file_path = os.path.join(DOWNLOAD_DIR, filename)
-        if os.path.exists(file_path):
-            log(f"   File already exists, skipping.")
-        else:
-            with open(file_path, 'wb') as f:
-                f.write(file_data)
-            size_mb = len(file_data) / (1024 * 1024)
-            log(f"   Saved: {file_path} ({size_mb:.1f} MB)")
+        file_path = unique_filepath(os.path.join(DOWNLOAD_DIR, filename))
+        with open(file_path, 'wb') as f:
+            f.write(file_data)
+        size_mb = len(file_data) / (1024 * 1024)
+        log(f"   Saved: {file_path} ({size_mb:.1f} MB)")
 
-        # SUCCESS — delete chunk rows, insert metadata
+        # Delete chunk rows, insert metadata
         for eid in ids:
             url = f"{SUPABASE_URL}/rest/v1/base64_entries?id=eq.{eid}"
-            requests.delete(url, headers=headers)
+            requests.delete(url, headers=WRITE_HEADERS)
 
         requests.post(
             f"{SUPABASE_URL}/rest/v1/base64_entries",
-            headers=headers,
+            headers=WRITE_HEADERS,
             json={
                 "filename": filename,
                 "content": f"[Assembled from {total} chunks]",
@@ -135,34 +152,78 @@ def process_chunk_group(group_id, group_info):
 
     except Exception as e:
         log(f"   Assembly error: {e}")
-        # Reset chunks so they can be retried
+        # Reset chunks for retry
         for eid in ids:
             url = f"{SUPABASE_URL}/rest/v1/base64_entries?id=eq.{eid}"
-            requests.patch(url, headers=headers, json={"processed": False})
+            requests.patch(url, headers=WRITE_HEADERS, json={"processed": False})
 
 
 # ---- Startup recovery ----
 
 def recover_stuck_chunks():
-    """Batch-reset any chunk rows stuck as processed=true from a previous failed run."""
+    """Reset any chunk rows stuck as processed=true from a previous failed run."""
     try:
-        # Single PATCH to reset ALL stuck chunks at once
-        url = (f"{SUPABASE_URL}/rest/v1/base64_entries"
-               f"?file_type=like.chunk:*&processed=eq.true")
-        resp = requests.get(url + "&select=id", headers=headers, timeout=10)
+        resp = requests.get(
+            f"{SUPABASE_URL}/rest/v1/base64_entries"
+            f"?file_type=like.chunk:*&processed=eq.true&select=id",
+            headers=READ_HEADERS, timeout=10
+        )
         if resp.status_code == 200:
-            count = len(resp.json())
-            if count > 0:
-                log(f"Recovering {count} stuck chunk(s)...")
-                patch_resp = requests.patch(
-                    url, headers=headers, json={"processed": False}
+            stuck = resp.json()
+            if stuck:
+                log(f"Recovering {len(stuck)} stuck chunk(s)...")
+                requests.patch(
+                    f"{SUPABASE_URL}/rest/v1/base64_entries"
+                    f"?file_type=like.chunk:*&processed=eq.true",
+                    headers=WRITE_HEADERS, json={"processed": False}
                 )
-                if patch_resp.status_code in [200, 201, 204]:
-                    log(f"   Reset complete.")
-                else:
-                    log(f"   Reset failed: {patch_resp.status_code}")
+                log(f"   Reset complete.")
     except Exception as e:
         log(f"Recovery check failed: {e}")
+
+
+def cleanup_stale_chunks():
+    """Delete incomplete chunk groups older than STALE_CHUNK_MINUTES."""
+    try:
+        from datetime import timezone
+        cutoff = datetime.now(timezone.utc)
+        resp = requests.get(
+            f"{SUPABASE_URL}/rest/v1/base64_entries"
+            f"?file_type=like.chunk:*&select=id,file_type,created_at",
+            headers=READ_HEADERS, timeout=10
+        )
+        if resp.status_code != 200:
+            return
+
+        entries = resp.json()
+        if not entries:
+            return
+
+        groups = {}
+        for e in entries:
+            ft = e['file_type']
+            parts = ft.split(':')
+            if len(parts) >= 5:
+                gid = parts[1]
+                total = int(parts[3])
+                if gid not in groups:
+                    groups[gid] = {'total': total, 'ids': [], 'created': e['created_at']}
+                groups[gid]['ids'].append(e['id'])
+
+        for gid, g in groups.items():
+            if len(g['ids']) < g['total']:
+                created = datetime.fromisoformat(g['created'].replace('Z', '+00:00'))
+                age_min = (datetime.now(created.tzinfo) - created).total_seconds() / 60
+                if age_min > STALE_CHUNK_MINUTES:
+                    log(f"Cleaning stale incomplete group {gid} "
+                        f"({len(g['ids'])}/{g['total']}, {age_min:.0f}m old)")
+                    for eid in g['ids']:
+                        requests.delete(
+                            f"{SUPABASE_URL}/rest/v1/base64_entries?id=eq.{eid}",
+                            headers=WRITE_HEADERS
+                        )
+    except Exception as e:
+        log(f"Stale cleanup error: {e}")
 
 
 # ---- Main polling loop ----
@@ -173,14 +234,19 @@ def start_listener():
     print("-" * 50, flush=True)
 
     recover_stuck_chunks()
+    cleanup_stale_chunks()
+
+    poll_count = 0
 
     while True:
         try:
-            meta_url = (f"{SUPABASE_URL}/rest/v1/base64_entries"
-                        f"?processed=eq.false"
-                        f"&select=id,filename,file_type"
-                        f"&order=created_at.asc")
-            resp = requests.get(meta_url, headers=headers, timeout=10)
+            resp = requests.get(
+                f"{SUPABASE_URL}/rest/v1/base64_entries"
+                f"?processed=eq.false"
+                f"&select=id,filename,file_type"
+                f"&order=created_at.asc",
+                headers=READ_HEADERS, timeout=10
+            )
 
             if resp.status_code != 200:
                 log(f"Poll error: {resp.status_code}")
@@ -189,8 +255,14 @@ def start_listener():
 
             entries = resp.json()
             if not entries:
+                poll_count += 1
+                # Periodic stale cleanup every ~5 min
+                if poll_count % 100 == 0:
+                    cleanup_stale_chunks()
                 time.sleep(3)
                 continue
+
+            log(f"Poll: found {len(entries)} unprocessed entries")
 
             regular_ids = []
             chunk_groups = {}
@@ -214,20 +286,22 @@ def start_listener():
                 else:
                     regular_ids.append(entry['id'])
 
-            # Regular entries
+            # Process regular entries
             for eid in regular_ids:
                 url = (f"{SUPABASE_URL}/rest/v1/base64_entries"
                        f"?id=eq.{eid}&select=id,filename,content")
-                res = requests.get(url, headers=headers, timeout=60)
+                res = requests.get(url, headers=READ_HEADERS, timeout=60)
                 if res.status_code == 200:
                     data = res.json()
                     if data:
                         process_entry(data[0])
 
-            # Complete chunk groups
+            # Process chunk groups
             for gid, group in chunk_groups.items():
                 if len(group['ids']) >= group['total']:
                     process_chunk_group(gid, group)
+                else:
+                    log(f"  Group {gid}: {len(group['ids'])}/{group['total']} — waiting")
 
         except Exception as e:
             log(f"Error: {e}")
