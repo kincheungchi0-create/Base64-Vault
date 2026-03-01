@@ -412,6 +412,18 @@ textarea::placeholder {
   background: rgba(99, 102, 241, 0.05);
 }
 
+.btn-danger-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  padding: 8px 12px;
+  font-size: 0.8rem;
+}
+
+.btn-danger-ghost:hover {
+  color: var(--error);
+  background: rgba(239, 68, 68, 0.08);
+}
+
 .btn-danger {
   background: rgba(239, 68, 68, 0.1);
   color: var(--error);
@@ -434,6 +446,12 @@ textarea::placeholder {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 16px;
+}
+
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .section-header h2 {
@@ -544,6 +562,12 @@ textarea::placeholder {
   color: var(--success);
   background: rgba(34, 197, 94, 0.1);
   border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.entry-status.chunk {
+  color: var(--accent-primary);
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.2);
 }
 
 .entry-actions {

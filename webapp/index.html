@@ -118,15 +118,23 @@
         <section class="entries-section">
             <div class="section-header">
                 <h2>📦 Recent Entries <span class="entry-count" id="entryCount">(0/10)</span></h2>
-                <button class="btn btn-ghost" onclick="refreshEntries()">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                        <path d="M2 8a6 6 0 0111.3-2.7M14 8a6 6 0 01-11.3 2.7" stroke="currentColor" stroke-width="2"
-                            stroke-linecap="round" />
-                        <path d="M14 2v4h-4M2 14v-4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                            stroke-linejoin="round" />
-                    </svg>
-                    Refresh
-                </button>
+                <div class="section-actions">
+                    <button class="btn btn-ghost btn-danger-ghost" onclick="clearAllEntries()" title="Delete all entries from cloud">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                            <path d="M2 4h12M5 4V3a1 1 0 011-1h4a1 1 0 011 1v1M6 7v4M8 7v4M10 7v4M4 4l1 9a1 1 0 001 1h6a1 1 0 001-1l1-9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        Clear All
+                    </button>
+                    <button class="btn btn-ghost" onclick="refreshEntries()">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                            <path d="M2 8a6 6 0 0111.3-2.7M14 8a6 6 0 01-11.3 2.7" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" />
+                            <path d="M14 2v4h-4M2 14v-4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round" />
+                        </svg>
+                        Refresh
+                    </button>
+                </div>
             </div>
             <div class="entries-list" id="entriesList">
                 <div class="empty-state">

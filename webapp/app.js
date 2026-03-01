@@ -310,21 +310,24 @@ async function cleanupOldEntries() {
     }
 }
 
-// ---- Entries list (hide chunk rows) ----
+// ---- Entries list (show all: regular + chunks) ----
 async function refreshEntries() {
     const entriesList = document.getElementById('entriesList');
     const entryCount = document.getElementById('entryCount');
 
     try {
         const res = await fetch(
-            `${SUPABASE_URL}/rest/v1/base64_entries?select=id,filename,file_type,created_at,processed&file_type=not.like.chunk:*&order=created_at.desc&limit=${MAX_ENTRIES}`,
+            `${SUPABASE_URL}/rest/v1/base64_entries?select=id,filename,file_type,created_at,processed&order=created_at.desc&limit=50`,
             { headers: API_HEADERS }
         );
 
         if (!res.ok) throw new Error('Failed to fetch entries');
 
         const entries = await res.json();
-        entryCount.textContent = `(${entries.length}/${MAX_ENTRIES})`;
+        const regular = entries.filter(e => !e.file_type.startsWith('chunk:'));
+        const chunks = entries.filter(e => e.file_type.startsWith('chunk:'));
+
+        entryCount.textContent = `(${regular.length} files, ${chunks.length} chunks)`;
         setStatus('connected', 'Connected');
 
         if (entries.length === 0) {
@@ -337,10 +340,27 @@ async function refreshEntries() {
         }
 
         entriesList.innerHTML = entries.map((entry, i) => {
-            const icon = getIconForType(entry.file_type);
+            const isChunk = entry.file_type.startsWith('chunk:');
+            let displayType = entry.file_type;
+            let statusClass = 'pending';
+            let statusText = '⏳ Pending';
+
+            if (isChunk) {
+                const parts = entry.file_type.split(':');
+                if (parts.length >= 5) {
+                    const idx = parseInt(parts[2], 10) + 1;
+                    const total = parseInt(parts[3], 10);
+                    displayType = `chunk ${idx}/${total}`;
+                }
+                statusClass = 'chunk';
+                statusText = '📤 Assembling';
+            } else {
+                statusClass = entry.processed ? 'processed' : 'pending';
+                statusText = entry.processed ? '✓ Converted' : '⏳ Pending';
+            }
+
+            const icon = getIconForType(isChunk ? (entry.file_type.split(':').pop() || 'unknown') : entry.file_type);
             const timeAgo = getTimeAgo(entry.created_at);
-            const statusClass = entry.processed ? 'processed' : 'pending';
-            const statusText = entry.processed ? '✓ Converted' : '⏳ Pending';
 
             return `
                 <div class="entry-card" style="animation-delay: ${i * 0.06}s">
@@ -348,7 +368,7 @@ async function refreshEntries() {
                     <div class="entry-info">
                         <div class="entry-filename">${escapeHtml(entry.filename)}</div>
                         <div class="entry-meta">
-                            <span class="type-tag">${entry.file_type.toUpperCase()}</span>
+                            <span class="type-tag">${displayType.toUpperCase()}</span>
                             <span>${timeAgo}</span>
                         </div>
                     </div>
@@ -365,6 +385,33 @@ async function refreshEntries() {
         console.error('Fetch error:', err);
         setStatus('error', 'Error');
         showToast(`Connection error: ${err.message}`, 'error', '❌');
+    }
+}
+
+async function clearAllEntries() {
+    if (!confirm('Delete ALL entries from the cloud? This cannot be undone.')) return;
+
+    try {
+        setStatus('pending', 'Clearing...');
+        const res = await fetch(
+            `${SUPABASE_URL}/rest/v1/base64_entries?select=id`,
+            { headers: API_HEADERS }
+        );
+        if (!res.ok) throw new Error('Failed to fetch entries');
+        const entries = await res.json();
+
+        for (const e of entries) {
+            await fetch(`${SUPABASE_URL}/rest/v1/base64_entries?id=eq.${e.id}`, {
+                method: 'DELETE', headers: API_HEADERS
+            });
+        }
+
+        showToast(`Cleared ${entries.length} entries`, 'success', '🗑️');
+        await refreshEntries();
+    } catch (err) {
+        console.error('Clear error:', err);
+        showToast(`Error: ${err.message}`, 'error', '❌');
+        setStatus('error', 'Error');
     }
 }
 
