@@ -206,6 +206,25 @@ body {
   50% { opacity: 0.5; transform: scale(0.85); }
 }
 
+/* Listener Pill (shows how many local listeners are running) */
+.header-pills { display: flex; align-items: center; gap: 8px; }
+.listener-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--border-color);
+}
+.listener-pill .listener-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
+.listener-pill.active { border-color: rgba(99, 102, 241, 0.4); color: var(--accent-primary); }
+.listener-pill.active .listener-dot { background: var(--accent-primary); }
+.listener-pill.warning { border-color: rgba(245, 158, 11, 0.5); color: var(--warning); }
+.listener-pill.warning .listener-dot { background: var(--warning); }
+
 /* Glass Card */
 .glass-card {
   background: var(--bg-card);

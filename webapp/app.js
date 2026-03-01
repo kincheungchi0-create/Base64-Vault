@@ -186,6 +186,29 @@ function setStatus(state, text) {
     statusPill.querySelector('.status-text').textContent = text;
 }
 
+const LISTENER_STALE_MS = 90 * 1000;
+
+function updateListenerPill(heartbeatRows) {
+    const el = document.getElementById('listenerPill');
+    const textEl = document.getElementById('listenerText');
+    if (!el || !textEl) return;
+    const now = Date.now();
+    const activeIds = new Set();
+    for (const row of heartbeatRows) {
+        try {
+            const content = row.content || row.created_at || '';
+            const t = new Date(content).getTime();
+            if (now - t < LISTENER_STALE_MS) activeIds.add(row.filename);
+        } catch (_) {}
+    }
+    const n = activeIds.size;
+    el.className = 'listener-pill ' + (n === 0 ? 'none' : n === 1 ? 'active' : 'warning');
+    if (n === 0) textEl.textContent = 'No listener';
+    else if (n === 1) textEl.textContent = '1 listener';
+    else textEl.textContent = `${n} listeners`;
+    el.title = n > 1 ? 'Multiple listeners — use only one (run run_vault.bat to replace)' : 'Local listener (run run_vault.bat)';
+}
+
 // ---- Submit ----
 const SUBMIT_ICON = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8h12M10 4l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
@@ -326,22 +349,31 @@ async function refreshEntries() {
         if (!res.ok) throw new Error('Failed to fetch entries');
 
         const entries = await res.json();
-        const regular = entries.filter(e => !e.file_type.startsWith('chunk:'));
-        const chunks = entries.filter(e => e.file_type.startsWith('chunk:'));
+        const dataEntries = entries.filter(e => e.file_type !== 'listener_heartbeat');
+        const regular = dataEntries.filter(e => !e.file_type.startsWith('chunk:'));
+        const chunks = dataEntries.filter(e => e.file_type.startsWith('chunk:'));
 
         entryCount.textContent = `(${regular.length} files, ${chunks.length} chunks)`;
         setStatus('connected', 'Connected');
 
-        if (entries.length === 0) {
+        const heartRes = await fetch(
+            `${SUPABASE_URL}/rest/v1/base64_entries?file_type=eq.listener_heartbeat&select=filename,content`,
+            { headers: API_HEADERS }
+        );
+        const heartbeat = heartRes.ok ? await heartRes.json() : [];
+        updateListenerPill(heartbeat);
+
+        if (dataEntries.length === 0) {
             entriesList.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-icon">📭</div>
                     <p>No entries yet. Paste some Base64 content above!</p>
                 </div>`;
+            updateListenerPill(heartbeat);
             return;
         }
 
-        entriesList.innerHTML = entries.map((entry, i) => {
+        entriesList.innerHTML = dataEntries.map((entry, i) => {
             const isChunk = entry.file_type.startsWith('chunk:');
             let displayType = entry.file_type;
             let statusClass = 'pending';

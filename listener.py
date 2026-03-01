@@ -5,7 +5,8 @@ import base64
 import requests
 import json
 import re
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 
 SUPABASE_URL = "https://fkzsmtlryhvccivhdapu.supabase.co"
 SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrenNtdGxyeWh2Y2NpdmhkYXB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY4MzM5MzAsImV4cCI6MjA4MjQwOTkzMH0.0_liolRCK4YVuBGxtaYZXiB59Rx-bZCTsea2T_Mp5lM"
@@ -13,6 +14,8 @@ SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads")
 CHUNK_FETCH_BATCH = 10
 STALE_CHUNK_MINUTES = 5
+HEARTBEAT_INTERVAL = 30
+HEARTBEAT_CLEANUP_SEC = 120
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
@@ -237,10 +240,51 @@ def cleanup_stale_chunks():
         log(f"Stale cleanup error: {e}")
 
 
+# ---- Listener heartbeat (for website to show "Listener: N active") ----
+
+def send_heartbeat(instance_id):
+    """Write a heartbeat row so the website can count active listeners."""
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        requests.post(
+            f"{SUPABASE_URL}/rest/v1/base64_entries",
+            headers=WRITE_HEADERS,
+            json={
+                "filename": instance_id,
+                "content": now_iso,
+                "file_type": "listener_heartbeat",
+                "processed": True
+            },
+            timeout=5
+        )
+        # Delete old heartbeat rows so the table doesn't grow
+        resp = requests.get(
+            f"{SUPABASE_URL}/rest/v1/base64_entries"
+            f"?file_type=eq.listener_heartbeat&select=id,content",
+            headers=READ_HEADERS, timeout=5
+        )
+        if resp.status_code == 200:
+            cutoff = datetime.now(timezone.utc).timestamp() - HEARTBEAT_CLEANUP_SEC
+            for row in resp.json():
+                try:
+                    ts = datetime.fromisoformat(row['content'].replace('Z', '+00:00')).timestamp()
+                    if ts < cutoff:
+                        requests.delete(
+                            f"{SUPABASE_URL}/rest/v1/base64_entries?id=eq.{row['id']}",
+                            headers=WRITE_HEADERS, timeout=5
+                        )
+                except Exception:
+                    pass
+    except Exception as e:
+        pass  # don't spam log on heartbeat failure
+
+
 # ---- Main polling loop ----
 
 def start_listener():
+    instance_id = str(uuid.uuid4())[:8]
     log("Base64 Listener Started")
+    log(f"Instance: {instance_id}")
     log(f"Downloads: {DOWNLOAD_DIR}")
     log("Run only ONE listener — multiple instances will mark chunks as processed and break assembly.")
     print("-" * 50, flush=True)
@@ -249,9 +293,15 @@ def start_listener():
     cleanup_stale_chunks()
 
     poll_count = 0
+    last_heartbeat = 0.0
 
     while True:
         try:
+            now = time.time()
+            if now - last_heartbeat >= HEARTBEAT_INTERVAL:
+                send_heartbeat(instance_id)
+                last_heartbeat = now
+
             resp = requests.get(
                 f"{SUPABASE_URL}/rest/v1/base64_entries"
                 f"?processed=eq.false"
