@@ -90,6 +90,22 @@ def process_entry(entry):
 
 # ---- Chunk group assembly ----
 
+def _fetch_chunk_contents(ids, total):
+    """Fetch content for chunk ids. Returns list of {content, file_type}. Raises on failure."""
+    all_chunks = []
+    for batch_start in range(0, len(ids), CHUNK_FETCH_BATCH):
+        batch_ids = ids[batch_start:batch_start + CHUNK_FETCH_BATCH]
+        ids_str = ','.join(str(i) for i in batch_ids)
+        url = (f"{SUPABASE_URL}/rest/v1/base64_entries"
+               f"?id=in.({ids_str})"
+               f"&select=content,file_type")
+        res = requests.get(url, headers=READ_HEADERS, timeout=120)
+        if res.status_code != 200:
+            raise Exception(f"Fetch failed: {res.status_code}")
+        all_chunks.extend(res.json())
+    return all_chunks
+
+
 def process_chunk_group(group_id, group_info):
     filename = group_info['filename']
     total = group_info['total']
@@ -98,29 +114,27 @@ def process_chunk_group(group_id, group_info):
 
     log(f"Assembling: {filename} ({total} chunks, group={group_id})")
 
-    # Claim chunks first so no other process touches them
+    # Delay so last chunk is visible if listener started during upload
+    time.sleep(5)
+    log(f"   Fetching {total} chunks...")
+
+    # Claim chunks so no other process touches them
     for eid in ids:
         url = f"{SUPABASE_URL}/rest/v1/base64_entries?id=eq.{eid}"
         requests.patch(url, headers=WRITE_HEADERS, json={"processed": True})
 
     try:
-        all_chunks = []
-        for batch_start in range(0, len(ids), CHUNK_FETCH_BATCH):
-            batch_ids = ids[batch_start:batch_start + CHUNK_FETCH_BATCH]
-            ids_str = ','.join(str(i) for i in batch_ids)
-            url = (f"{SUPABASE_URL}/rest/v1/base64_entries"
-                   f"?id=in.({ids_str})"
-                   f"&select=content,file_type")
-            res = requests.get(url, headers=READ_HEADERS, timeout=120)
-            if res.status_code != 200:
-                log(f"   Fetch error: {res.status_code}")
-                raise Exception(f"Fetch failed: {res.status_code}")
-            all_chunks.extend(res.json())
-            fetched = min(batch_start + CHUNK_FETCH_BATCH, len(ids))
-            log(f"   Fetched {fetched}/{total} chunks")
-
+        all_chunks = _fetch_chunk_contents(ids, total)
+        if len(all_chunks) != total:
+            for wait in [5, 10]:
+                log(f"   Got {len(all_chunks)}/{total} — retrying in {wait}s (upload may still be committing)...")
+                time.sleep(wait)
+                all_chunks = _fetch_chunk_contents(ids, total)
+                if len(all_chunks) == total:
+                    break
         if len(all_chunks) != total:
             raise Exception(f"Got {len(all_chunks)}/{total} chunks")
+        log(f"   Fetched {len(all_chunks)}/{total} chunks")
 
         all_chunks.sort(key=lambda c: int(c['file_type'].split(':')[2]))
         combined = ''.join(c['content'] for c in all_chunks)
@@ -289,6 +303,9 @@ def start_listener():
     log("Run only ONE listener — multiple instances will mark chunks as processed and break assembly.")
     print("-" * 50, flush=True)
 
+    recover_stuck_chunks()
+    log("Waiting 5s for uploads to settle, then re-checking stuck chunks...")
+    time.sleep(5)
     recover_stuck_chunks()
     cleanup_stale_chunks()
 

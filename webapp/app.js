@@ -484,13 +484,46 @@ function escapeHtml(str) {
 
 async function toggleProcessed(id, currentProcessed) {
     try {
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/base64_entries?id=eq.${id}`, {
-            method: 'PATCH',
-            headers: API_HEADERS,
-            body: JSON.stringify({ processed: !currentProcessed })
-        });
-        if (!res.ok) throw new Error('Update failed');
-        showToast(currentProcessed ? 'Marked pending — listener will process again' : 'Marked done', 'info', '🔄');
+        let idsToUpdate = [id];
+        const getRes = await fetch(
+            `${SUPABASE_URL}/rest/v1/base64_entries?id=eq.${id}&select=file_type`,
+            { headers: API_HEADERS }
+        );
+        if (getRes.ok) {
+            const rows = await getRes.json();
+            const ft = rows[0]?.file_type || '';
+            if (ft.startsWith('chunk:')) {
+                const parts = ft.split(':');
+                if (parts.length >= 2) {
+                    const groupId = parts[1];
+                    const pattern = 'like.' + encodeURIComponent('chunk:' + groupId + ':') + '*';
+                    const groupRes = await fetch(
+                        `${SUPABASE_URL}/rest/v1/base64_entries?file_type=${pattern}&select=id`,
+                        { headers: API_HEADERS }
+                    );
+                    if (groupRes.ok) {
+                        const groupRows = await groupRes.json();
+                        idsToUpdate = groupRows.map(r => r.id);
+                    }
+                }
+            }
+        }
+        const value = !currentProcessed;
+        for (const eid of idsToUpdate) {
+            const res = await fetch(`${SUPABASE_URL}/rest/v1/base64_entries?id=eq.${eid}`, {
+                method: 'PATCH',
+                headers: API_HEADERS,
+                body: JSON.stringify({ processed: value })
+            });
+            if (!res.ok) throw new Error('Update failed');
+        }
+        const n = idsToUpdate.length;
+        showToast(
+            n > 1
+                ? (currentProcessed ? `Marked ${n} chunks pending` : `Marked ${n} chunks done`)
+                : (currentProcessed ? 'Marked pending — listener will process again' : 'Marked done'),
+            'info', '🔄'
+        );
         await refreshEntries();
     } catch (err) {
         showToast(`Error: ${err.message}`, 'error', '❌');
