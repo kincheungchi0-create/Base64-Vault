@@ -9,10 +9,11 @@ echo.
 echo   Webapp:    Deployed on Vercel
 echo   Downloads: %~dp0downloads
 echo.
+echo   Stopping any previous listener...
+powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"name='python.exe'\" | Where-Object { $_.CommandLine -like '*listener.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+timeout /t 2 /nobreak >nul
+echo   Starting new listener...
 echo   Polling Supabase every 3 seconds...
-echo.
-echo   IMPORTANT: Close any other Listener window first.
-echo   Only one listener should run, or chunks will not assemble.
 echo ========================================
 echo.
 
