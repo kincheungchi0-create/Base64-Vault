@@ -408,6 +408,9 @@ async function refreshEntries() {
                     </div>
                     <div class="entry-status ${statusClass}">${statusText}</div>
                     <div class="entry-actions">
+                        <button class="btn btn-ghost btn-toggle" onclick="toggleProcessed(${entry.id}, ${entry.processed ? 'true' : 'false'})" title="${entry.processed ? 'Mark pending (listener will process again)' : 'Mark done (skip processing)'}">
+                            ${entry.processed ? '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 8h12M8 2v12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' : '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 8l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'}
+                        </button>
                         <button class="btn btn-danger" onclick="deleteEntry(${entry.id})">
                             <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
                         </button>
@@ -477,6 +480,21 @@ function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+}
+
+async function toggleProcessed(id, currentProcessed) {
+    try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/base64_entries?id=eq.${id}`, {
+            method: 'PATCH',
+            headers: API_HEADERS,
+            body: JSON.stringify({ processed: !currentProcessed })
+        });
+        if (!res.ok) throw new Error('Update failed');
+        showToast(currentProcessed ? 'Marked pending — listener will process again' : 'Marked done', 'info', '🔄');
+        await refreshEntries();
+    } catch (err) {
+        showToast(`Error: ${err.message}`, 'error', '❌');
+    }
 }
 
 async function deleteEntry(id) {

@@ -455,6 +455,15 @@ textarea::placeholder {
   background: rgba(239, 68, 68, 0.2);
 }
 
+.btn-toggle {
+  padding: 6px 8px;
+  color: var(--text-muted);
+}
+.btn-toggle:hover {
+  color: var(--accent-primary);
+  background: rgba(99, 102, 241, 0.08);
+}
+
 /* Entries Section */
 .entries-section {
   margin-top: 32px;
