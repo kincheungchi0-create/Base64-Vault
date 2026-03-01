@@ -250,11 +250,13 @@ async function uploadChunked(filename, ext, content) {
                         content: chunk,
                         file_type: `chunk:${groupId}:${j}:${totalChunks}:${ext}`,
                         processed: false
-                    })
+                    }),
+                    signal: AbortSignal.timeout(120000)
                 }).then(async res => {
                     if (!res.ok) {
                         const err = await res.json().catch(() => ({}));
-                        throw new Error(err.message || `Chunk ${j + 1}/${totalChunks} failed`);
+                        const msg = err.message || res.statusText || 'Upload failed';
+                        throw new Error(`Chunk ${j + 1}/${totalChunks} failed (${res.status}): ${msg}`);
                     }
                     uploaded++;
                     const pct = Math.round(uploaded / totalChunks * 100);

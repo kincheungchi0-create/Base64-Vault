@@ -12,7 +12,7 @@ SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 
 DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads")
 CHUNK_FETCH_BATCH = 10
-STALE_CHUNK_MINUTES = 10
+STALE_CHUNK_MINUTES = 5
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
