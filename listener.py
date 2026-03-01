@@ -12,7 +12,7 @@ SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 
 DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads")
 CHUNK_FETCH_BATCH = 10
-STALE_CHUNK_MINUTES = 30
+STALE_CHUNK_MINUTES = 10
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
@@ -207,13 +207,18 @@ def cleanup_stale_chunks():
                 gid = parts[1]
                 total = int(parts[3])
                 if gid not in groups:
-                    groups[gid] = {'total': total, 'ids': [], 'created': e['created_at']}
+                    groups[gid] = {'total': total, 'ids': [], 'all_created': []}
                 groups[gid]['ids'].append(e['id'])
+                groups[gid]['all_created'].append(e['created_at'])
 
         for gid, g in groups.items():
             if len(g['ids']) < g['total']:
-                created = datetime.fromisoformat(g['created'].replace('Z', '+00:00'))
-                age_min = (datetime.now(created.tzinfo) - created).total_seconds() / 60
+                # Use the EARLIEST created_at in the group as the age reference
+                earliest = min(g['all_created'])
+                created = datetime.fromisoformat(earliest.replace('Z', '+00:00'))
+                from datetime import timezone
+                age_min = (datetime.now(timezone.utc) - created).total_seconds() / 60
+                log(f"  Stale check: group {gid} is {age_min:.0f}m old ({len(g['ids'])}/{g['total']})")
                 if age_min > STALE_CHUNK_MINUTES:
                     log(f"Cleaning stale incomplete group {gid} "
                         f"({len(g['ids'])}/{g['total']}, {age_min:.0f}m old)")
@@ -302,6 +307,9 @@ def start_listener():
                     process_chunk_group(gid, group)
                 else:
                     log(f"  Group {gid}: {len(group['ids'])}/{group['total']} — waiting")
+
+            # Always check for stale incomplete groups after processing
+            cleanup_stale_chunks()
 
         except Exception as e:
             log(f"Error: {e}")

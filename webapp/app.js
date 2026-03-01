@@ -6,8 +6,8 @@ const SUPABASE_URL = 'https://fkzsmtlryhvccivhdapu.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrenNtdGxyeWh2Y2NpdmhkYXB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY4MzM5MzAsImV4cCI6MjA4MjQwOTkzMH0.0_liolRCK4YVuBGxtaYZXiB59Rx-bZCTsea2T_Mp5lM';
 const MAX_ENTRIES = 10;
 const LARGE_PASTE_THRESHOLD = 2 * 1024 * 1024; // 2MB — intercept paste above this
-const CHUNK_SIZE = 5 * 1024 * 1024;             // 5MB per Supabase POST
-const PARALLEL_UPLOADS = 3;
+const CHUNK_SIZE = 3 * 1024 * 1024;             // 3MB per Supabase POST (safe limit)
+const PARALLEL_UPLOADS = 1;                      // Serial upload to avoid Supabase rejections
 
 const API_HEADERS = {
     'apikey': SUPABASE_ANON_KEY,
@@ -426,7 +426,9 @@ function getIconForType(type) {
 }
 
 function getTimeAgo(dateStr) {
-    const diffMs = Date.now() - new Date(dateStr).getTime();
+    // Ensure UTC timezone is recognised (Supabase returns UTC without Z sometimes)
+    const normalized = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z';
+    const diffMs = Date.now() - new Date(normalized).getTime();
     const diffSec = Math.floor(diffMs / 1000);
     const diffMin = Math.floor(diffSec / 60);
     const diffHr = Math.floor(diffMin / 60);
